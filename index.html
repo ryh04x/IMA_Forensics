@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Metadata Analyzer | Digital Forensic Tool</title>
+    
+    <!-- Embedded Favicon (Shield Search Icon) -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%230f172a%22/><path d=%22M50 10 L15 25 V50 C15 75 50 95 50 95 C50 95 85 75 85 50 V25 L50 10 Z%22 fill=%22%233b82f6%22/><circle cx=%2250%22 cy=%2245%22 r=%2214%22 stroke=%22white%22 stroke-width=%227%22 fill=%22none%22/><line x1=%2260%22 y1=%2258%22 x2=%2272%22 y2=%2270%22 stroke=%22white%22 stroke-width=%227%22 stroke-linecap=%22round%22/></svg>">
+
+    <!-- Tailwind CSS for Styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- exifr for Fast, Universal Metadata Extraction -->
+    <script src="https://cdn.jsdelivr.net/npm/exifr/dist/full.umd.js"></script>
+    
+    <!-- Leaflet CSS & JS for Maps -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;800&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a; /* Slate 900 */
+            color: #e2e8f0; /* Slate 200 */
+        }
+        
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1e293b; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #475569; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b; 
+        }
+
+        .forensic-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(148, 163, 184, 0.1);
+        }
+
+        .scan-line {
+            position: absolute;
+            width: 100%;
+            height: 2px;
+            background: #3b82f6;
+            animation: scan 2s linear infinite;
+            display: none;
+            box-shadow: 0 0 10px #3b82f6;
+        }
+
+        .drag-active {
+            border-color: #3b82f6 !important;
+            background-color: rgba(59, 130, 246, 0.1) !important;
+            transform: scale(1.02);
+        }
+
+        @keyframes scan {
+            0% { top: 0%; opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { top: 100%; opacity: 0; }
+        }
+
+        /* Print Specific Styles for Full Reports */
+        @media print {
+            body {
+                background-color: white !important;
+                color: black !important;
+                font-size: 12pt;
+            }
+            nav, #upload-section, button, #history-panel-btn, #history-panel, footer, .no-print, #search-bar-container {
+                display: none !important;
+            }
+            #dashboard {
+                display: block !important;
+                padding: 0 !important;
+            }
+            /* Stack Grid Columns for Print */
+            .grid {
+                display: block !important;
+            }
+            .lg\:col-span-1, .lg\:col-span-2 {
+                width: 100% !important;
+            }
+
+            .forensic-panel {
+                background: white !important;
+                border: 1px solid #ddd !important;
+                box-shadow: none !important;
+                margin-bottom: 20px !important;
+                page-break-inside: avoid;
+            }
+
+            /* --- FIX: Metadata Table Expansion --- */
+            #metadata-panel {
+                height: auto !important;
+                overflow: visible !important;
+            }
+            #metadata-panel div.overflow-y-auto {
+                height: auto !important;
+                overflow: visible !important;
+            }
+
+            /* --- FIX: Map Visibility --- */
+            #map-panel {
+                height: 400px !important; 
+                display: block !important;
+                page-break-inside: avoid;
+                border: 1px solid #ccc !important;
+            }
+            .leaflet-control-container {
+                display: none !important; 
+            }
+
+            /* --- FIX: Image Preview Visibility --- */
+            #preview-panel {
+                display: block !important;
+                page-break-inside: avoid;
+                height: auto !important;
+            }
+            #image-preview {
+                max-height: 400px !important;
+            }
+
+            /* Styling Text */
+            #metadata-body tr td {
+                color: black !important;
+                border-bottom: 1px solid #eee;
+            }
+            h1, h2, h3, h4, p, span, div {
+                color: black !important;
+                text-shadow: none !important;
+            }
+            .scan-line { display: none !important; }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <!-- Navbar -->
+    <nav class="border-b border-slate-800 bg-slate-900/90 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center gap-3">
+                    <i data-lucide="shield-search" class="w-8 h-8 text-blue-500"></i>
+                    <div>
+                        <h1 class="text-xl font-bold text-white tracking-tight">IMA Forensics</h1>
+                        <p class="text-xs text-slate-400">Image Metadata Analyzer</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-4">
+                    <button id="reset-btn" class="hidden md:flex items-center gap-2 px-3 py-1.5 text-slate-400 hover:text-red-400 text-sm transition-colors border border-transparent hover:border-red-900/50 rounded-md">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        Reset
+                    </button>
+                    <button id="history-toggle" class="flex items-center gap-2 px-3 py-1.5 text-slate-400 hover:text-white text-sm transition-colors">
+                        <i data-lucide="history" class="w-4 h-4"></i>
+                        History
+                    </button>
+                    <span class="hidden lg:inline px-3 py-1 rounded-full bg-slate-800 text-xs font-mono text-blue-400 border border-blue-900/50">v2.7.0 Pro</span>
+                    <button onclick="window.print()" class="hidden md:flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-md text-sm transition-colors border border-slate-700">
+                        <i data-lucide="printer" class="w-4 h-4"></i>
+                        Report
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="flex-grow p-4 md:p-8 max-w-7xl mx-auto w-full space-y-8 relative">
+
+        <!-- History Panel -->
+        <div id="history-panel" class="hidden absolute right-4 top-0 w-80 z-40 forensic-panel rounded-xl p-4 shadow-2xl border border-slate-700/50 bg-slate-900/95">
+            <div class="flex items-center justify-between mb-4 border-b border-slate-700 pb-2">
+                <h3 class="text-sm font-bold text-white uppercase tracking-wider">Analysis History</h3>
+                <button onclick="document.getElementById('history-panel').classList.add('hidden')" class="text-slate-400 hover:text-white">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+            <div id="history-list" class="space-y-3 max-h-[60vh] overflow-y-auto">
+                <div class="text-slate-500 text-xs text-center py-4">No previous analysis in this session.</div>
+            </div>
+        </div>
+
+        <!-- Upload Section -->
+        <section id="upload-section" class="w-full transition-all duration-300">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Drop Zone -->
+                <div id="drop-zone" class="relative group cursor-pointer" onclick="document.getElementById('file-input').click()">
+                    <div class="absolute -inset-1 bg-gradient-to-r from-blue-600 to-cyan-600 rounded-xl blur opacity-25 group-hover:opacity-50 transition duration-200"></div>
+                    <div class="relative forensic-panel rounded-xl p-8 flex flex-col items-center justify-center border-2 border-dashed border-slate-600 hover:border-blue-500 transition-all duration-200 h-64">
+                        <div class="p-4 bg-slate-800/50 rounded-full mb-4 group-hover:scale-110 transition-transform duration-200">
+                            <i data-lucide="upload-cloud" class="w-10 h-10 text-blue-400"></i>
+                        </div>
+                        <h3 class="text-xl font-semibold text-white mb-2">Upload File</h3>
+                        <p class="text-slate-400 text-center text-sm max-w-xs">Drag & Drop or Click to Browse<br>Supports JPEG, PNG, WEBP, TIFF, HEIC</p>
+                        <p class="text-slate-500 text-xs mt-2 font-mono">Or press Ctrl+V to paste image</p>
+                        <input type="file" id="file-input" class="hidden" accept="image/*">
+                    </div>
+                </div>
+
+                <!-- URL Input -->
+                <div class="relative group">
+                    <div class="absolute -inset-1 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl blur opacity-10 group-hover:opacity-25 transition duration-200"></div>
+                    <div class="relative forensic-panel rounded-xl p-8 flex flex-col items-center justify-center border-2 border-dashed border-slate-700 hover:border-purple-500 transition-colors h-64">
+                        <div class="p-4 bg-slate-800/50 rounded-full mb-4">
+                            <i data-lucide="link" class="w-10 h-10 text-purple-400"></i>
+                        </div>
+                        <h3 class="text-xl font-semibold text-white mb-4">Analyze from URL</h3>
+                        <div class="w-full max-w-xs space-y-3">
+                            <input type="text" id="url-input" placeholder="https://example.com/image.jpg" class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500">
+                            <button id="url-btn" class="w-full bg-slate-800 hover:bg-slate-700 text-white text-sm font-medium py-2 rounded border border-slate-700 transition-colors flex items-center justify-center gap-2">
+                                <i data-lucide="search" class="w-4 h-4"></i> Fetch Image
+                            </button>
+                            <label class="flex items-center gap-2 text-xs text-slate-500 cursor-pointer justify-center select-none">
+                                <input type="checkbox" id="cors-proxy" class="rounded bg-slate-900 border-slate-700">
+                                Use CORS Proxy (For strict websites)
+                            </label>
+                        </div>
+                        <p id="url-error" class="text-red-400 text-xs mt-3 hidden text-center"></p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Analysis Dashboard -->
+        <div id="dashboard" class="hidden space-y-6">
+            
+            <!-- Top Row: Image & Key Stats -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                
+                <!-- Image Preview & Hash Panel -->
+                <div id="preview-panel" class="lg:col-span-1 forensic-panel rounded-xl p-4 overflow-hidden relative">
+                    <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                        <i data-lucide="image" class="w-4 h-4"></i> Evidence Preview
+                    </h3>
+                    <div class="relative rounded-lg overflow-hidden border border-slate-700 bg-slate-950 aspect-video flex items-center justify-center group">
+                        <img id="image-preview" src="" alt="Evidence" class="max-w-full max-h-full object-contain z-10 transition-transform duration-300 group-hover:scale-105">
+                        <p id="preview-error" class="hidden text-xs text-slate-500 absolute text-center px-4">
+                            Preview Unavailable<br>(Format Not Supported by Browser)
+                        </p>
+                        <div id="scan-effect" class="scan-line z-20"></div>
+                    </div>
+                    
+                    <!-- Embedded Thumbnail Preview (Hidden by default) -->
+                    <div id="thumb-container" class="hidden mt-4 pt-4 border-t border-slate-700/50">
+                        <h4 class="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-2">
+                            <i data-lucide="eye" class="w-3 h-3"></i> Embedded Thumbnail
+                        </h4>
+                        <div class="relative w-24 h-24 rounded overflow-hidden border border-slate-700 bg-black">
+                            <img id="thumb-preview" class="w-full h-full object-cover">
+                        </div>
+                    </div>
+
+                    <div class="mt-4 space-y-3">
+                        <div class="bg-slate-800/50 p-3 rounded-lg border border-slate-700">
+                            <span class="text-xs text-slate-500 block">Source</span>
+                            <span id="file-name" class="text-sm font-mono text-white truncate block">-</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="bg-slate-800/50 p-3 rounded-lg border border-slate-700">
+                                <span class="text-xs text-slate-500 block">File Size</span>
+                                <span id="file-size" class="text-sm font-mono text-white">-</span>
+                            </div>
+                            <div class="bg-slate-800/50 p-3 rounded-lg border border-slate-700">
+                                <span class="text-xs text-slate-500 block">Format</span>
+                                <span id="file-type" class="text-sm font-mono text-white">-</span>
+                            </div>
+                        </div>
+                        <!-- Hash -->
+                        <div class="bg-slate-800/50 p-3 rounded-lg border border-slate-700">
+                            <span class="text-xs text-slate-500 block flex items-center gap-1"><i data-lucide="hash" class="w-3 h-3"></i> SHA-256 Hash</span>
+                            <span id="file-hash" class="text-[10px] font-mono text-blue-300 break-all leading-tight block mt-1">Calculating...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Anomaly Detection Panel -->
+                <div id="anomaly-panel" class="lg:col-span-2 forensic-panel rounded-xl p-6 relative overflow-hidden">
+                    <div class="flex items-center justify-between mb-6">
+                        <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                            <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-500"></i> Anomaly Detection Report
+                        </h3>
+                        <span id="risk-score" class="px-3 py-1 rounded bg-green-900/30 text-green-400 text-xs font-bold border border-green-800">NO THREATS DETECTED</span>
+                    </div>
+
+                    <div id="anomaly-list" class="space-y-3">
+                        <div class="text-slate-500 text-sm italic">Waiting for analysis...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Middle Row: Metadata & Map -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                
+                <!-- Metadata Table -->
+                <div id="metadata-panel" class="forensic-panel rounded-xl p-6 h-[500px] overflow-hidden flex flex-col">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                            <i data-lucide="table" class="w-4 h-4"></i> EXIF Data
+                        </h3>
+                        <div class="flex gap-2 items-center no-print">
+                            <div id="search-bar-container" class="relative mr-2">
+                                <i data-lucide="search" class="absolute left-2 top-1.5 w-3 h-3 text-slate-500"></i>
+                                <input type="text" id="meta-search" placeholder="Filter tags..." class="bg-slate-900 border border-slate-700 rounded-md py-1 pl-7 pr-2 text-xs text-white focus:outline-none focus:border-blue-500 w-32 focus:w-48 transition-all">
+                            </div>
+                            <button id="download-json" class="text-xs text-slate-400 hover:text-white flex items-center gap-1">
+                                <i data-lucide="download" class="w-3 h-3"></i> JSON
+                            </button>
+                            <button id="copy-json" class="text-xs text-blue-400 hover:text-blue-300">Copy</button>
+                        </div>
+                    </div>
+                    <div class="overflow-y-auto flex-grow pr-2 h-[500px]">
+                        <table class="w-full text-sm text-left">
+                            <thead class="text-xs text-slate-500 uppercase bg-slate-800/50 sticky top-0">
+                                <tr>
+                                    <th class="px-4 py-3 rounded-tl-lg">Tag</th>
+                                    <th class="px-4 py-3 rounded-tr-lg">Value</th>
+                                </tr>
+                            </thead>
+                            <tbody id="metadata-body" class="divide-y divide-slate-800">
+                                <!-- Rows injected here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Map Visualization -->
+                <div id="map-panel" class="forensic-panel rounded-xl p-0 overflow-hidden relative h-[500px] flex flex-col">
+                    <div class="absolute top-4 left-4 z-[400] bg-slate-900/90 backdrop-blur px-4 py-2 rounded-lg border border-slate-700 shadow-xl no-print flex items-center gap-3">
+                        <h3 class="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                            <i data-lucide="map-pin" class="w-4 h-4 text-red-500"></i> Geolocation
+                        </h3>
+                        <a id="gmaps-link" href="#" target="_blank" class="hidden text-xs text-blue-400 hover:text-white flex items-center gap-1 border-l border-slate-700 pl-3">
+                            <i data-lucide="external-link" class="w-3 h-3"></i> Google Maps
+                        </a>
+                    </div>
+                    <!-- Print-only Map Header -->
+                    <div class="hidden p-4 border-b border-slate-200 map-print-header" style="display:none">
+                         <h3 class="text-sm font-bold text-black uppercase tracking-wider flex items-center gap-2">
+                            Geolocation Map
+                        </h3>
+                    </div>
+                    <div id="map" class="w-full h-full bg-slate-900 flex items-center justify-center">
+                        <p class="text-slate-600 flex items-center gap-2">
+                            <i data-lucide="globe-2" class="w-5 h-5"></i>
+                            No GPS Data Found
+                        </p>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-800 bg-slate-900 py-6 mt-8">
+        <div class="max-w-7xl mx-auto px-4 text-center">
+            <p class="text-slate-500 text-sm">© 2025 Image Metadata Analyzer. Developed for UPES Minor Project.</p>
+        </div>
+    </footer>
+
+    <script>
+        // Initialize Lucide Icons
+        lucide.createIcons();
+
+        // DOM Elements
+        const fileInput = document.getElementById('file-input');
+        const dropZone = document.getElementById('drop-zone');
+        const dashboard = document.getElementById('dashboard');
+        const uploadSection = document.getElementById('upload-section');
+        const imagePreview = document.getElementById('image-preview');
+        const thumbPreview = document.getElementById('thumb-preview');
+        const thumbContainer = document.getElementById('thumb-container');
+        const previewError = document.getElementById('preview-error');
+        const fileNameEl = document.getElementById('file-name');
+        const fileSizeEl = document.getElementById('file-size');
+        const fileTypeEl = document.getElementById('file-type');
+        const fileHashEl = document.getElementById('file-hash');
+        const metadataBody = document.getElementById('metadata-body');
+        const metaSearch = document.getElementById('meta-search');
+        const anomalyList = document.getElementById('anomaly-list');
+        const riskScoreEl = document.getElementById('risk-score');
+        const scanLine = document.getElementById('scan-effect');
+        const historyPanel = document.getElementById('history-panel');
+        const historyList = document.getElementById('history-list');
+        const historyToggle = document.getElementById('history-toggle');
+        const resetBtn = document.getElementById('reset-btn');
+        const urlInput = document.getElementById('url-input');
+        const urlBtn = document.getElementById('url-btn');
+        const urlError = document.getElementById('url-error');
+        const downloadJsonBtn = document.getElementById('download-json');
+        const gmapsLink = document.getElementById('gmaps-link');
+
+        let map = null;
+        let analysisHistory = [];
+        let currentMetadata = null; 
+
+        // --- Event Listeners ---
+        
+        fileInput.addEventListener('change', (e) => processFile(e.target.files[0]));
+        
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.firstElementChild.classList.add('drag-active');
+        });
+        
+        dropZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            dropZone.firstElementChild.classList.remove('drag-active');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.firstElementChild.classList.remove('drag-active');
+            if (e.dataTransfer.files.length) {
+                processFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        document.addEventListener('paste', handlePaste);
+        urlBtn.addEventListener('click', handleUrlUpload);
+        urlInput.addEventListener('keypress', (e) => { if(e.key === 'Enter') handleUrlUpload(); });
+        historyToggle.addEventListener('click', () => historyPanel.classList.toggle('hidden'));
+        resetBtn.addEventListener('click', resetDashboard);
+        
+        // Metadata Search Filter
+        metaSearch.addEventListener('keyup', function(e) {
+            const term = e.target.value.toLowerCase();
+            const rows = metadataBody.getElementsByTagName('tr');
+            Array.from(rows).forEach(row => {
+                const text = row.textContent.toLowerCase();
+                row.style.display = text.includes(term) ? '' : 'none';
+            });
+        });
+
+        downloadJsonBtn.addEventListener('click', () => {
+            if(!currentMetadata) return;
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(currentMetadata, null, 2));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", "forensic_metadata.json");
+            document.body.appendChild(downloadAnchorNode);
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+        });
+        
+        imagePreview.addEventListener('error', function() {
+            if (this.src && this.src !== window.location.href && !this.src.endsWith('#')) {
+                this.classList.add('hidden');
+                previewError.classList.remove('hidden');
+            }
+        });
+
+        // --- Core Functions ---
+
+        async function processFile(file) {
+            if (!file) return;
+
+            // UI Reset
+            dashboard.classList.remove('hidden');
+            uploadSection.classList.add('hidden'); 
+            scanLine.style.display = 'block';
+            metadataBody.innerHTML = '';
+            anomalyList.innerHTML = '<div class="text-slate-500 text-sm italic">Scanning...</div>';
+            resetBtn.classList.remove('hidden');
+            thumbContainer.classList.add('hidden'); // Reset thumbnail
+            fileHashEl.textContent = "Calculating...";
+            
+            imagePreview.classList.remove('hidden');
+            previewError.classList.add('hidden');
+
+            // Basic File Info
+            fileNameEl.textContent = file.name || "Unknown Source";
+            fileSizeEl.textContent = file.size ? (file.size / 1024 / 1024).toFixed(2) + ' MB' : "N/A";
+            fileTypeEl.textContent = file.type || "Unknown";
+
+            // 1. Instant Preview
+            const objectUrl = URL.createObjectURL(file);
+            imagePreview.src = objectUrl;
+            imagePreview.onload = () => URL.revokeObjectURL(objectUrl);
+
+            // 2. Hash Calculation (SHA-256) - Critical for Forensics
+            calculateFileHash(file).then(hash => {
+                fileHashEl.textContent = hash;
+            });
+
+            // 3. Fast Metadata Extraction
+            try {
+                // Parse widely to get everything (TIFF, XMP, ICC, GPS, Thumbnail)
+                const output = await exifr.parse(file, {
+                    tiff: true,
+                    xmp: true,
+                    icc: true,
+                    jfif: true,
+                    ihdr: true,
+                    gps: true,
+                    mergeOutput: true,
+                    thumbnail: true // Explicitly ask for thumbnail
+                });
+
+                scanLine.style.display = 'none';
+                currentMetadata = output;
+
+                if (output) {
+                    renderMetadata(output);
+                    const risk = analyzeAnomalies(output);
+                    renderMap(output);
+                    
+                    // 4. Thumbnail Extraction
+                    const thumbBuffer = await exifr.thumbnail(file);
+                    if (thumbBuffer) {
+                        const thumbUrl = URL.createObjectURL(new Blob([thumbBuffer]));
+                        thumbPreview.src = thumbUrl;
+                        thumbContainer.classList.remove('hidden');
+                    }
+
+                    addToHistory(file.name || "Imported Image", risk);
+                } else {
+                    renderEmptyState();
+                    addToHistory(file.name || "Imported Image", "No Metadata");
+                }
+            } catch (error) {
+                console.error("Parsing error:", error);
+                scanLine.style.display = 'none';
+                renderEmptyState("Error parsing file or format not supported.");
+                addToHistory(file.name || "Error", "Error");
+            }
+        }
+
+        async function calculateFileHash(file) {
+            try {
+                const buffer = await file.arrayBuffer();
+                const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+                const hashArray = Array.from(new Uint8Array(hashBuffer));
+                const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+                return hashHex;
+            } catch (e) {
+                return "Error calculating hash";
+            }
+        }
+
+        async function handleUrlUpload() {
+            const url = urlInput.value.trim();
+            const useProxy = document.getElementById('cors-proxy').checked;
+            
+            if (!url) return;
+
+            urlBtn.disabled = true;
+            urlBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Fetching...`;
+            urlError.classList.add('hidden');
+
+            try {
+                const fetchUrl = useProxy ? `https://corsproxy.io/?${encodeURIComponent(url)}` : url;
+                const response = await fetch(fetchUrl);
+                if (!response.ok) throw new Error("Failed to fetch image");
+                
+                const blob = await response.blob();
+                const fileName = url.split('/').pop().split('?')[0] || "downloaded_image.jpg";
+                const file = new File([blob], fileName, { type: blob.type });
+                
+                processFile(file);
+                
+            } catch (error) {
+                urlError.textContent = "Error: Could not load image. Try checking 'Use CORS Proxy' or download the image first.";
+                urlError.classList.remove('hidden');
+                console.error(error);
+            } finally {
+                urlBtn.disabled = false;
+                urlBtn.innerHTML = `<i data-lucide="search" class="w-4 h-4"></i> Fetch Image`;
+            }
+        }
+
+        function handlePaste(e) {
+            const items = e.clipboardData.items;
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].type.indexOf("image") !== -1) {
+                    const blob = items[i].getAsFile();
+                    const file = new File([blob], "clipboard_image_" + new Date().getTime() + ".png", { type: blob.type });
+                    processFile(file);
+                    break;
+                }
+            }
+        }
+
+        function resetDashboard() {
+            dashboard.classList.add('hidden');
+            uploadSection.classList.remove('hidden');
+            fileInput.value = "";
+            urlInput.value = "";
+            urlError.classList.add('hidden');
+            if (map) { map.remove(); map = null; }
+            currentMetadata = null;
+            gmapsLink.classList.add('hidden');
+        }
+
+        function addToHistory(filename, status) {
+            const time = new Date().toLocaleTimeString();
+            let color = "text-slate-400";
+            if(status === "High Risk") color = "text-red-400";
+            if(status === "Safe") color = "text-green-400";
+
+            const item = `
+                <div class="flex items-center justify-between p-2 bg-slate-800/50 rounded border border-slate-700">
+                    <div>
+                        <div class="text-xs text-white font-medium truncate w-32" title="${filename}">${filename}</div>
+                        <div class="text-[10px] text-slate-500">${time}</div>
+                    </div>
+                    <span class="text-xs font-bold ${color}">${status}</span>
+                </div>
+            `;
+            
+            if(analysisHistory.length === 0) historyList.innerHTML = '';
+            
+            analysisHistory.unshift(item);
+            historyList.innerHTML = analysisHistory.join('');
+        }
+
+        function renderEmptyState(msg = "No metadata found in this image.") {
+            metadataBody.innerHTML = `<tr><td colspan="2" class="px-4 py-6 text-center text-slate-500">${msg}</td></tr>`;
+            anomalyList.innerHTML = `<div class="text-slate-500 text-sm">Analysis incomplete.</div>`;
+        }
+
+        function renderMetadata(tags) {
+            metadataBody.innerHTML = '';
+            
+            for (const [key, val] of Object.entries(tags)) {
+                if (val instanceof Uint8Array || key === 'MakerNote' || key === 'UserComment') continue;
+                
+                const row = document.createElement('tr');
+                row.className = "hover:bg-slate-800/30 transition-colors group";
+                
+                let displayValue = val;
+                
+                if (val instanceof Date) {
+                    displayValue = val.toLocaleString();
+                }
+                else if (Array.isArray(val)) {
+                    displayValue = `[${val.map(v => typeof v === 'number' ? v.toFixed(4) : v).join(', ')}]`;
+                }
+                else if (typeof val === 'object' && val !== null) {
+                    displayValue = JSON.stringify(val).substring(0, 40) + '...';
+                }
+
+                row.innerHTML = `
+                    <td class="px-4 py-3 font-mono text-xs text-blue-300 font-medium group-hover:text-blue-200">${key}</td>
+                    <td class="px-4 py-3 text-slate-300 text-xs break-all">${displayValue}</td>
+                `;
+                metadataBody.appendChild(row);
+            }
+        }
+
+        function analyzeAnomalies(tags) {
+            anomalyList.innerHTML = '';
+            let issues = [];
+            let warnings = [];
+
+            const getTag = (key) => tags[key] || tags[Object.keys(tags).find(k => k.toLowerCase() === key.toLowerCase())];
+
+            const software = getTag('Software') || getTag('History');
+            if (software && typeof software === 'string' && 
+               (software.toLowerCase().includes('adobe') || 
+                software.toLowerCase().includes('photoshop') || 
+                software.toLowerCase().includes('gimp') ||
+                software.toLowerCase().includes('canva') ||
+                software.toLowerCase().includes('lightroom'))) {
+                issues.push({
+                    title: "Editing Software Detected",
+                    desc: `Metadata indicates processing with: ${software}. This suggests the image is not original camera output.`,
+                    severity: "high"
+                });
+            }
+
+            const dateOriginal = tags.DateTimeOriginal || tags.CreateDate || tags.DateCreated;
+            if (!dateOriginal) {
+                warnings.push({
+                    title: "Missing Creation Timestamp",
+                    desc: "Critical timestamp tags (DateTimeOriginal) are missing. Common in stripped metadata or social media downloads.",
+                    severity: "medium"
+                });
+            }
+
+            if (!tags.latitude || !tags.longitude) {
+                warnings.push({
+                    title: "No Geolocation Data",
+                    desc: "GPS coordinates are missing. Unable to verify location authenticity.",
+                    severity: "low"
+                });
+            }
+
+            const allAlerts = [...issues, ...warnings];
+            let status = "Safe";
+            
+            if (allAlerts.length === 0) {
+                riskScoreEl.textContent = "AUTHENTICITY LIKELY";
+                riskScoreEl.className = "px-3 py-1 rounded bg-green-900/30 text-green-400 text-xs font-bold border border-green-800";
+                anomalyList.innerHTML = `
+                    <div class="flex items-start gap-3 p-3 rounded-lg bg-green-900/10 border border-green-900/30">
+                        <i data-lucide="check-circle" class="w-5 h-5 text-green-500 mt-0.5"></i>
+                        <div>
+                            <h4 class="text-sm font-semibold text-green-400">Clean Metadata Structure</h4>
+                            <p class="text-xs text-green-300/70 mt-1">No obvious signatures of manipulation software or stripped critical tags.</p>
+                        </div>
+                    </div>
+                `;
+            } else {
+                if (issues.length > 0) {
+                    riskScoreEl.textContent = "MANIPULATION DETECTED";
+                    riskScoreEl.className = "px-3 py-1 rounded bg-red-900/30 text-red-400 text-xs font-bold border border-red-800 animate-pulse";
+                    status = "High Risk";
+                } else {
+                    riskScoreEl.textContent = "POTENTIAL ANOMALIES";
+                    riskScoreEl.className = "px-3 py-1 rounded bg-amber-900/30 text-amber-400 text-xs font-bold border border-amber-800";
+                    status = "Warning";
+                }
+
+                allAlerts.forEach(alert => {
+                    const colorClass = alert.severity === 'high' ? 'red' : (alert.severity === 'medium' ? 'amber' : 'slate');
+                    
+                    const div = document.createElement('div');
+                    div.className = `flex items-start gap-3 p-3 rounded-lg bg-${colorClass}-900/10 border border-${colorClass}-900/30`;
+                    div.innerHTML = `
+                        <i data-lucide="${alert.severity === 'high' ? 'alert-octagon' : 'alert-triangle'}" class="w-5 h-5 text-${colorClass}-500 mt-0.5"></i>
+                        <div>
+                            <h4 class="text-sm font-semibold text-${colorClass}-400">${alert.title}</h4>
+                            <p class="text-xs text-${colorClass}-300/70 mt-1">${alert.desc}</p>
+                        </div>
+                    `;
+                    anomalyList.appendChild(div);
+                });
+            }
+            lucide.createIcons();
+            return status;
+        }
+
+        function renderMap(tags) {
+            const lat = tags.latitude;
+            const lon = tags.longitude;
+
+            const mapContainer = document.getElementById('map');
+
+            if (lat && lon) {
+                if (map) {
+                    map.remove();
+                }
+                mapContainer.innerHTML = ""; 
+                gmapsLink.href = `https://www.google.com/maps?q=${lat},${lon}`;
+                gmapsLink.classList.remove('hidden');
+
+                map = L.map('map').setView([lat, lon], 13);
+
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                    subdomains: 'abcd',
+                    maxZoom: 20
+                }).addTo(map);
+
+                L.marker([lat, lon]).addTo(map)
+                    .bindPopup(`<b>Image Location</b><br>Lat: ${lat.toFixed(6)}<br>Lon: ${lon.toFixed(6)}`)
+                    .openPopup();
+                
+                setTimeout(() => { map.invalidateSize(); }, 100);
+            } else {
+                 if (map) {
+                    map.remove();
+                    map = null;
+                }
+                gmapsLink.classList.add('hidden');
+                mapContainer.innerHTML = `
+                    <p class="text-slate-600 flex items-center gap-2">
+                        <i data-lucide="globe-2" class="w-5 h-5"></i>
+                        No GPS Data Found
+                    </p>
+                `;
+                lucide.createIcons();
+            }
+        }
+    </script>
+</body>
+</html>
